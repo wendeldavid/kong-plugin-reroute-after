@@ -1,0 +1,8 @@
+{
+    "Lua.diagnostics.globals": [
+        "kong",
+        "ngx",
+        "unpack",
+        "noop"
+    ]
+}
