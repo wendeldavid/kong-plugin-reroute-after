@@ -1,4 +1,3 @@
-local match = string.match
 local http = require "resty.http"
 
 local plugin = {
@@ -6,7 +5,7 @@ local plugin = {
   VERSION = "0.1",
 }
 
-
+-- iterator da configuração
 local function iter(config_array)
   if type(config_array) ~= "table" then
     return noop
@@ -15,38 +14,58 @@ local function iter(config_array)
   return function(config_array, i)
     i = i + 1
 
-    local header_to_test = config_array[i]
-    if header_to_test == nil then -- n + 1
+    local iter_config = config_array[i]
+    if iter_config == nil then -- n + 1
       return nil
     end
 
-    local header_to_test_name, header_to_test_value = match(header_to_test, "^([^,]+),*(.-)$")
-    if header_to_test_value == "" then
-      header_to_test_value = nil
+    local header_name = iter_config.header_name
+    local header_value = iter_config.header_value
+    local url = iter_config.url
+
+    if header_name == "" then
+      header_name = nil
+    end
+    if header_value == "" then
+      header_value = nil
+    end
+    if url == "" then
+      url = nil
     end
 
-    return i, header_to_test_name, header_to_test_value
+    return i, header_name, header_value, url
   end, config_array, 0
 end
 
-local function getCustomizationURL(plugin_conf, tenantName)
+-- retorna a url a ser chamada
+local function getURL(plugin_conf)
 
-  kong.log.debug("buscando customização do tenant "..tenantName)
+  kong.log.debug("buscando url de customização")
+  kong.log.debug(plugin_conf.after[1].header_name)
 
-  for _, tenant, url in iter(plugin_conf.before) do
-    -- kong.log.debug("iter tenant -> "..tenant)
-    -- kong.log.debug("iter url -> "..url)
-    if (tenant == tenantName) then
+  for _, header_name, header_value, url in iter(plugin_conf.after) do
+    local req_header_value = kong.request.get_header(header_name)
+
+    kong.log.debug("iter config -> header_name: "..header_name.." header_value: "..header_value.." url: "..url)
+
+    if (header_value == req_header_value) then
       return url
     end
   end
 
   return nil
-
 end
 
-local function make_request(plugin_conf, customizationUrl)
-  local scheme, host, port, _ = unpack(http:parse_uri(customizationUrl))
+local function make_request(plugin_conf)
+  local service = kong.router.get_service()
+
+  local method = kong.request.get_method()
+  local scheme = service.scheme
+  local host = service.host
+  local port = service.port
+  local path = kong.request.get_path()
+  local headers = kong.request.get_headers()
+  local body = kong.request.get_raw_body()
 
   local client = http.new()
   client:set_timeout(plugin_conf.timeout)
@@ -60,11 +79,12 @@ local function make_request(plugin_conf, customizationUrl)
       end
   end
 
+
   local res, err = client:request{
-    path = customizationUrl,
-    method = kong.request.get_method(),
-    headers = kong.request.get_headers(),
-    body = kong.request.get_raw_body(),
+    path = path,
+    method = method,
+    headers = headers,
+    body = body,
     keepalive_timeout = plugin_conf.timeout,
     ssl_verify = false
   }
@@ -82,37 +102,22 @@ end
 -- runs in the 'access_by_lua_block'
 function plugin:access(plugin_conf)
 
-  kong.log.debug("plugin:access -> request")
-  kong.log.debug(kong.request)
+  local customizationUrl = getURL(plugin_conf)
 
-  local tenantName = kong.request.get_header("X-Tenant")
+  if customizationUrl ~= nil then
 
-  if tenantName ~= nil then
-    kong.log.debug("que seja feita a customização")
+    local res = make_request(plugin_conf)
 
-    local customizationUrl = getCustomizationURL(plugin_conf, tenantName)
+    kong.log(res)
 
-    if customizationUrl ~= nil then
-      kong.log.debug("faz o before pra fora e pega a resposta e manda pro upstream service")
+    local scheme, host, port, path = unpack(http:parse_uri(customizationUrl))
 
-      local beforeRes = make_request(plugin_conf, customizationUrl)
+    kong.service.set_target(host, port)
+    kong.service.request.set_scheme(scheme)
+    kong.service.request.set_path(path)
+    kong.service.request.set_raw_body(res:read_body())
 
-      if not beforeRes or beforeRes.status >= 300 then
-        return kong.response.exit(500, "fuuuuu")
-      end
-
-      kong.log.debug("resposta do before")
-      kong.log.debug(beforeRes)
-
-      kong.log.debug("reaponse has body: "..tostring(beforeRes.has_body))
-
-      local body = beforeRes:read_body()
-      kong.log.debug("response body")
-      kong.log.debug(body)
-
-    return kong.service.request.set_raw_body(body)
-    end
-
+    kong.log(kong.service.requests)
   end
 
 end
