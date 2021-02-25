@@ -1,16 +1,37 @@
-[![Build Status][badge-travis-image]][badge-travis-url]
+# Kong plugin reroute-after
 
-Kong plugin template
-====================
+When a request to the upstream service needs to be redirected to a custom backend **after** was sent to the upstream.
 
-This repository contains a very simple Kong plugin template to get you
-up and running quickly for developing your own plugins.
+## Configuration Reference
 
-This template was designed to work with the
-[`kong-pongo`](https://github.com/Kong/kong-pongo) and
-[`kong-vagrant`](https://github.com/Kong/kong-vagrant) development environments.
+### Enabling the plugin on a Service, Route or Globally
+```json
+curl -X POST 'http://<admin-hostname>:8001/<enabling-location>' \
+--header 'Content-Type: application/json' \
+--data-raw '{
+    "name": "reroute-after",
+    "config": {
+        "run_on_preflight" : false,
+        "after" : [{
+            "header_name" : "X-Custom-Header",
+            "header_value" : "header-value",
+            "url" : "http://custom.url"
+        }]
+    }
+}'
+```
 
-Please check out those repos `README` files for usage instructions.
+where `<enabling-location>` can be:
 
-[badge-travis-url]: https://travis-ci.org/Kong/kong-plugin/branches
-[badge-travis-image]: https://travis-ci.com/Kong/kong-plugin.svg?branch=master
+|     local    |                value               |
+| ------------ | ---------------------------------- |
+| on a Service | `/services/<service-name>/plugins` |
+| on a Route   | `/routes/<route-name>/plugins`     |
+| globally     |  `/plugins`                        |
+
+
+## Usage
+
+After enabling on a route/service/globally, a request will be sent to the upstream service. If a header value from the request matches with the configuration, then the upstream response will bem sent to the custom service. Finally, the response from the custom service will be the response sent to the source of the request.
+
+![alt](doc/kong-plugin-reroute-after.png)
